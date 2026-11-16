@@ -76,8 +76,31 @@ export function companyFromUrl(url) {
  *
  * @param {any} j
  * @param {string} [fallbackCompany]
- * @returns {{ title: string, url: string, company: string, location: string, postedAt?: number } | null}
+ * @returns {{ title: string, url: string, company: string, location: string, postedAt?: number, salary?: { min: number, max: number, currency: string } } | null}
  */
+
+/**
+ * @param {any} j
+ * @returns {{ min: number, max: number, currency: string } | undefined}
+ */
+export function landingSalary(j) {
+  if (!j || typeof j !== 'object') return undefined;
+  /** @param {unknown} v */
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+
+  const lowValue = num(j.gross_salary_low);
+  const highValue = num(j.gross_salary_high);
+  if (lowValue === undefined && highValue === undefined) return undefined;
+  const resolvedMin = /** @type {number} */ (lowValue ?? highValue);
+  const resolvedMax = /** @type {number} */ (highValue ?? lowValue);
+  const currency = typeof j.currency_code === 'string' ? j.currency_code.trim().toUpperCase() : '';
+  return {
+    min: Math.min(resolvedMin, resolvedMax),
+    max: Math.max(resolvedMin, resolvedMax),
+    currency,
+  };
+}
+
 export function normalizeLandingJob(j, fallbackCompany) {
   if (!j || typeof j !== 'object') return null;
 
@@ -110,6 +133,8 @@ export function normalizeLandingJob(j, fallbackCompany) {
   const job = { title, url, company, location };
   const postedAt = toEpochMs(j.published_at) ?? toEpochMs(j.created_at);
   if (postedAt !== undefined) job.postedAt = postedAt;
+  const salary = landingSalary(j);
+  if (salary !== undefined) job.salary = salary;
   return job;
 }
 
