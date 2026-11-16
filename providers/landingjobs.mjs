@@ -16,6 +16,7 @@
 
 const FEED_URL = 'https://landing.jobs/api/v1/jobs';
 const TRUSTED_HOST = 'landing.jobs';
+const TRUSTED_HOSTS = new Set([TRUSTED_HOST, `www.${TRUSTED_HOST}`]);
 
 /** @param {string} url */
 function assertLandingUrl(url) {
@@ -26,7 +27,7 @@ function assertLandingUrl(url) {
     throw new Error(`landingjobs: invalid URL: ${url}`);
   }
   if (parsed.protocol !== 'https:') throw new Error(`landingjobs: URL must use HTTPS: ${url}`);
-  if (parsed.hostname !== TRUSTED_HOST) {
+  if (!TRUSTED_HOSTS.has(parsed.hostname)) {
     throw new Error(`landingjobs: untrusted hostname "${parsed.hostname}" — must be ${TRUSTED_HOST}`);
   }
   return url;
@@ -38,7 +39,50 @@ function toEpochMs(value) {
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? undefined : parsed;
 }
+export function landingSalary(j) {
+    if (!j || typeof j !== 'object') return undefined;
 
+    /** @param {unknown} v */
+    const num = (v) => {
+        if (typeof v === 'number') {
+            return Number.isFinite(v) && v >= 0 ? v : undefined;
+        }
+        if (typeof v !== 'string') return undefined;
+
+        const trimmed = v.trim();
+        if (!trimmed) return undefined;
+
+        const normalized = trimmed
+            .replace(/[\s$€£¥,]+/g, '')
+            .replace(/k$/i, '000')
+            .replace(/m$/i, '000000');
+
+        if (!normalized) return undefined;
+        const parsed = Number(normalized);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+    };
+
+    const lowValue = num(j.gross_salary_low);
+    const highValue = num(j.gross_salary_high);
+
+    if (lowValue === undefined && highValue === undefined) {
+        return undefined;
+    }
+
+    const resolvedMin = /** @type {number} */ (lowValue ?? highValue);
+    const resolvedMax = /** @type {number} */ (highValue ?? lowValue);
+
+    const currency =
+        typeof j.currency_code === 'string'
+            ? j.currency_code.trim().toUpperCase()
+            : '';
+
+    return {
+        min: Math.min(resolvedMin, resolvedMax),
+        max: Math.max(resolvedMin, resolvedMax),
+        currency,
+    };
+}
 /**
  * Derive a best-effort company name from a Landing.jobs posting URL.
  * Posting URLs are `https://landing.jobs/at/<slug>/<job>`; the `<slug>` is
@@ -78,29 +122,6 @@ export function companyFromUrl(url) {
  * @param {string} [fallbackCompany]
  * @returns {{ title: string, url: string, company: string, location: string, postedAt?: number, salary?: { min: number, max: number, currency: string } } | null}
  */
-
-/**
- * @param {any} j
- * @returns {{ min: number, max: number, currency: string } | undefined}
- */
-export function landingSalary(j) {
-  if (!j || typeof j !== 'object') return undefined;
-  /** @param {unknown} v */
-  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
-
-  const lowValue = num(j.gross_salary_low);
-  const highValue = num(j.gross_salary_high);
-  if (lowValue === undefined && highValue === undefined) return undefined;
-  const resolvedMin = /** @type {number} */ (lowValue ?? highValue);
-  const resolvedMax = /** @type {number} */ (highValue ?? lowValue);
-  const currency = typeof j.currency_code === 'string' ? j.currency_code.trim().toUpperCase() : '';
-  return {
-    min: Math.min(resolvedMin, resolvedMax),
-    max: Math.max(resolvedMin, resolvedMax),
-    currency,
-  };
-}
-
 export function normalizeLandingJob(j, fallbackCompany) {
   if (!j || typeof j !== 'object') return null;
 
@@ -112,7 +133,7 @@ export function normalizeLandingJob(j, fallbackCompany) {
   if (rawUrl) {
     try {
       const parsed = new URL(rawUrl);
-      if (parsed.protocol === 'https:' && parsed.hostname === TRUSTED_HOST) url = parsed.href;
+      if (parsed.protocol === 'https:' && TRUSTED_HOSTS.has(parsed.hostname)) url = parsed.href;
     } catch {
       // malformed URL → leave url = '' → dropped below
     }
@@ -129,12 +150,12 @@ export function normalizeLandingJob(j, fallbackCompany) {
   const base = [city, country].filter(Boolean).join(', ');
   const location = [base, j.remote === true ? 'Remote' : ''].filter(Boolean).join(', ');
 
-  /** @type {{ title: string, url: string, company: string, location: string, postedAt?: number }} */
+  /** @type {{ title: string, url: string, company: string, location: string, postedAt?: number, salary?: { min: number, max: number, currency: string } }} */
   const job = { title, url, company, location };
   const postedAt = toEpochMs(j.published_at) ?? toEpochMs(j.created_at);
   if (postedAt !== undefined) job.postedAt = postedAt;
   const salary = landingSalary(j);
-  if (salary !== undefined) job.salary = salary;
+  if (salary) job.salary = salary;
   return job;
 }
 

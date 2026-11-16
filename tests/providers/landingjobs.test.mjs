@@ -48,6 +48,14 @@ try {
   if (remoteJob?.location === 'Berlin, DE, Remote') pass('normalizeLandingJob appends "Remote" when remote is true');
   else fail(`normalizeLandingJob remote location = ${JSON.stringify(remoteJob?.location)}`);
 
+  // www subdomain and salary strings are accepted.
+  const wwwJob = normalizeLandingJob({ title: 'R2', url: 'https://www.landing.jobs/at/acme/r2', locations: [{ city: 'Paris', country_code: 'FR' }], remote: false, gross_salary_low: '52000', gross_salary_high: '70000', currency_code: 'eur' });
+  if (wwwJob?.company === 'Acme' && wwwJob?.location === 'Paris, FR' && landingSalary({ gross_salary_low: '52000', gross_salary_high: '70000', currency_code: 'eur' })?.max === 70000) {
+    pass('normalizeLandingJob accepts the www subdomain and landingSalary parses numeric string ranges');
+  } else {
+    fail(`normalizeLandingJob/www/salary = ${JSON.stringify({ wwwJob, salary: landingSalary({ gross_salary_low: '52000', gross_salary_high: '70000', currency_code: 'eur' }) })}`);
+  }
+
   // company fallback: url is landing.jobs but not /at/<slug>/ → entry name, then "Landing.jobs".
   const coEntry = normalizeLandingJob({ title: 'T', url: 'https://landing.jobs/jobs/99' }, 'Entry Name');
   const coDefault = normalizeLandingJob({ title: 'T', url: 'https://landing.jobs/jobs/100' });
@@ -119,19 +127,18 @@ try {
   fail(`landingjobs provider tests crashed: ${e.message}`);
 }
 
+
 const salCases = [
   [{ gross_salary_low: 50000, gross_salary_high: 67000, currency_code: 'EUR' },
     { min: 50000, max: 67000, currency: 'EUR' }, 'a full range maps straight through'],
-
   [{ gross_salary_low: 40000, currency_code: 'eur' },
     { min: 40000, max: 40000, currency: 'EUR' }, 'a low-only range fills max and upper-cases the currency'],
-
   [{ gross_salary_high: 40000, currency_code: 'EUR' },
     { min: 40000, max: 40000, currency: 'EUR' }, 'a high-only range fills min'],
-
   [{ gross_salary_low: 90000, gross_salary_high: 30000, currency_code: 'EUR' },
     { min: 30000, max: 90000, currency: 'EUR' }, 'inverted bounds are ordered'],
-
+  [{ gross_salary_low: '€52,000', gross_salary_high: '70k', currency_code: 'eur' },
+    { min: 52000, max: 70000, currency: 'EUR' }, 'formatted salary strings are parsed'],
   [{ gross_salary_low: 50000, gross_salary_high: 60000 },
     { min: 50000, max: 60000, currency: '' }, 'a missing currency_code yields an empty string, not undefined'],
 ];
@@ -142,23 +149,23 @@ for (const [input, want, label] of salCases) {
   else fail(`landingSalary: ${label} — got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 }
 
-  const noSalary = [
+const noSalary = [
   [{ currency_code: 'EUR' }, 'no salary fields'],
   [{ gross_salary_low: null, gross_salary_high: null }, 'explicit nulls'],
   [{ gross_salary_low: 'lots' }, 'a non-numeric bound'],
   [{ gross_salary_low: NaN }, 'NaN'],
   [{ gross_salary_low: -5000 }, 'a negative figure'],
-  [null, 'a null posting']
+  [null, 'a null posting'],
 ];
 
 for (const [input, label] of noSalary) {
-  if (landingSalary(input) === undefined)
+  if (landingSalary(input) === undefined) {
     pass(`landingSalary: ${label} -> undefined`);
-  else
+  } else {
     fail(`landingSalary: ${label} should give undefined, got ${JSON.stringify(landingSalary(input))}`);
+  }
 }
 
-// the mapping must actually reach the normalized job
 const withSal = normalizeLandingJob({
   title: 'Senior AI Engineer',
   url: 'https://landing.jobs/at/acme/senior-ai-engineer',
@@ -170,9 +177,20 @@ const withSal = normalizeLandingJob({
 if (withSal && JSON.stringify(withSal.salary) === JSON.stringify({
   min: 50000,
   max: 65000,
-  currency: 'EUR'
-}))
+  currency: 'EUR',
+})) {
   pass('normalizeLandingJob attaches salary when the posting publishes a range');
-else {
+} else {
   fail(`normalizeLandingJob salary = ${JSON.stringify(withSal && withSal.salary)}`);
+}
+
+const withoutSal = normalizeLandingJob({
+  title: 'Platform Engineer',
+  url: 'https://landing.jobs/at/acme/platform-engineer',
+}, 'Fallback');
+
+if (withoutSal && !('salary' in withoutSal)) {
+  pass('normalizeLandingJob omits salary entirely when the posting has none');
+} else {
+  fail(`normalizeLandingJob should omit salary, got ${JSON.stringify(withoutSal && withoutSal.salary)}`);
 }
